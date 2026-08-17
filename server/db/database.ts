@@ -464,45 +464,69 @@ function migrateLegacyJsonIfNeeded(database: DatabaseSync) {
     }
   }
 
-  // Ensure default staff and admin profiles exist if none in database
-  const userCount = (database.prepare('SELECT COUNT(*) as count FROM profiles').get() as { count: number }).count;
-  if (userCount === 0) {
-    const adminPassHash = bcrypt.hashSync('KitaleAdmin2026!', 10);
-    const pharmPassHash = bcrypt.hashSync('PharmacistKitale2026!', 10);
+  // Ensure default staff and admin profiles exist
+  const adminEmail = 'wekesavictor450@gmail.com';
+  const adminPassword = process.env.ADMIN_PASSWORD;
 
+  const adminProfile = database.prepare("SELECT id FROM profiles WHERE email = ? OR role = 'admin'").get(adminEmail) as { id: string } | undefined;
+
+  if (!adminProfile) {
+    const adminId = 'usr-admin-01';
     const insertProfile = database.prepare(`
       INSERT INTO profiles (id, email, full_name, phone, address, role, is_active, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+      VALUES (?, ?, ?, ?, ?, 'admin', 1, ?, ?)
     `);
-    const insertPass = database.prepare(`
-      INSERT INTO user_passwords (profile_id, password_hash, updated_at)
-      VALUES (?, ?, ?)
-    `);
-
-    const adminId = 'usr-admin-01';
     insertProfile.run(
       adminId,
-      'admin@godsfavorpharmacy.ke',
+      adminEmail,
       'Chief Pharmacist / Admin',
       '07417758578',
       'Kijana Wamalwa Road, Kitale',
-      'admin',
       new Date().toISOString(),
       new Date().toISOString()
     );
-    insertPass.run(adminId, adminPassHash, new Date().toISOString());
 
+    if (adminPassword) {
+      const adminPassHash = bcrypt.hashSync(adminPassword, 10);
+      const insertPass = database.prepare(`
+        INSERT OR REPLACE INTO user_passwords (profile_id, password_hash, updated_at)
+        VALUES (?, ?, ?)
+      `);
+      insertPass.run(adminId, adminPassHash, new Date().toISOString());
+    }
+  } else {
+    // Sync email and ensure active
+    database.prepare(`
+      UPDATE profiles
+      SET email = ?, role = 'admin', is_active = 1, updated_at = ?
+      WHERE id = ?
+    `).run(adminEmail, new Date().toISOString(), adminProfile.id);
+
+    if (adminPassword) {
+      const adminPassHash = bcrypt.hashSync(adminPassword, 10);
+      database.prepare(`
+        INSERT OR REPLACE INTO user_passwords (profile_id, password_hash, updated_at)
+        VALUES (?, ?, ?)
+      `).run(adminProfile.id, adminPassHash, new Date().toISOString());
+    }
+  }
+
+  // Ensure pharmacist profile exists
+  const pharmProfile = database.prepare("SELECT id FROM profiles WHERE role = 'pharmacist'").get() as { id: string } | undefined;
+  if (!pharmProfile) {
     const pharmId = 'usr-pharm-01';
+    const insertProfile = database.prepare(`
+      INSERT INTO profiles (id, email, full_name, phone, address, role, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'pharmacist', 1, ?, ?)
+    `);
     insertProfile.run(
       pharmId,
       'pharmacist@godsfavorpharmacy.ke',
       'Clinical Pharmacist on Duty',
       '07417758578',
       'Kitale Town',
-      'pharmacist',
       new Date().toISOString(),
       new Date().toISOString()
     );
-    insertPass.run(pharmId, pharmPassHash, new Date().toISOString());
   }
 }
