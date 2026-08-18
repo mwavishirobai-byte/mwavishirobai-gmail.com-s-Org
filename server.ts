@@ -60,6 +60,25 @@ const PORT = 3000;
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
+// Normalize incoming request path for Vercel serverless functions
+app.use((req, res, next) => {
+  if (req.url && !req.url.startsWith('/api') && !req.url.startsWith('/@') && !req.url.startsWith('/src') && !req.url.startsWith('/node_modules') && !req.url.startsWith('/assets')) {
+    req.url = `/api${req.url.startsWith('/') ? '' : '/'}${req.url}`;
+  }
+  next();
+});
+
+// Root API Endpoint
+app.get('/api', (req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    pharmacy: 'Gods Favor Pharmacy API',
+    location: 'Kitale Town, along Kijana Wamalwa Road, Kitale, Kenya',
+    doctorContact: '07417758578',
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // ----------------- RATE LIMITERS -----------------
 const authRateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
