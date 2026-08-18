@@ -62,7 +62,9 @@ app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
 // Normalize incoming request path for Vercel serverless functions
 app.use((req, res, next) => {
-  if (req.url && !req.url.startsWith('/api') && !req.url.startsWith('/@') && !req.url.startsWith('/src') && !req.url.startsWith('/node_modules') && !req.url.startsWith('/assets')) {
+  if (req.originalUrl && req.originalUrl.startsWith('/api')) {
+    req.url = req.originalUrl;
+  } else if (req.url && !req.url.startsWith('/api') && !req.url.startsWith('/@') && !req.url.startsWith('/src') && !req.url.startsWith('/node_modules') && !req.url.startsWith('/assets')) {
     req.url = `/api${req.url.startsWith('/') ? '' : '/'}${req.url}`;
   }
   next();
