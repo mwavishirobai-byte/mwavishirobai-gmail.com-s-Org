@@ -11,10 +11,338 @@ import {
   initialArticles,
 } from '../seedData';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'gods_favor_pharmacy.sqlite');
+const SCHEMA_SQL_FALLBACK = `
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS roles (
+  id TEXT PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  description TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS permissions (
+  id TEXT PRIMARY KEY,
+  code TEXT UNIQUE NOT NULL,
+  description TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  role_id TEXT NOT NULL,
+  permission_id TEXT NOT NULL,
+  PRIMARY KEY (role_id, permission_id),
+  FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+  FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS profiles (
+  id TEXT PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  full_name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  address TEXT DEFAULT '',
+  role TEXT NOT NULL DEFAULT 'customer',
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (role) REFERENCES roles(name) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email);
+CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
+CREATE INDEX IF NOT EXISTS idx_profiles_phone ON profiles(phone);
+
+CREATE TABLE IF NOT EXISTS user_passwords (
+  profile_id TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  ip_address TEXT,
+  user_agent TEXT,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_profile ON user_sessions(profile_id);
+
+CREATE TABLE IF NOT EXISTS categories (
+  id TEXT PRIMARY KEY,
+  slug TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  icon_name TEXT DEFAULT 'Pill',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_categories_slug ON categories(slug);
+
+CREATE TABLE IF NOT EXISTS products (
+  id TEXT PRIMARY KEY,
+  category_id TEXT,
+  name TEXT NOT NULL,
+  slug TEXT UNIQUE NOT NULL,
+  description TEXT DEFAULT '',
+  sku TEXT UNIQUE NOT NULL,
+  brand TEXT DEFAULT 'Generic',
+  price REAL NOT NULL,
+  discount_price REAL,
+  stock_quantity INTEGER NOT NULL DEFAULT 0,
+  prescription_required INTEGER NOT NULL DEFAULT 0,
+  image_url TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  dosage_form TEXT DEFAULT 'Tablets',
+  active_ingredient TEXT DEFAULT '',
+  pack_size TEXT DEFAULT 'Standard Pack',
+  instructions TEXT DEFAULT '',
+  warnings TEXT DEFAULT '',
+  storage_info TEXT DEFAULT '',
+  is_featured INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
+CREATE INDEX IF NOT EXISTS idx_products_slug ON products(slug);
+CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);
+CREATE INDEX IF NOT EXISTS idx_products_active ON products(active);
+
+CREATE TABLE IF NOT EXISTS inventory_logs (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL,
+  change_amount INTEGER NOT NULL,
+  previous_quantity INTEGER NOT NULL,
+  new_quantity INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  reference_id TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_inventory_product ON inventory_logs(product_id);
+
+CREATE TABLE IF NOT EXISTS orders (
+  id TEXT PRIMARY KEY,
+  order_number TEXT UNIQUE NOT NULL,
+  customer_id TEXT,
+  customer_name TEXT NOT NULL,
+  customer_phone TEXT NOT NULL,
+  customer_email TEXT,
+  subtotal REAL NOT NULL,
+  delivery_fee REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'awaiting_payment',
+  payment_status TEXT NOT NULL DEFAULT 'unpaid',
+  fulfillment_method TEXT NOT NULL DEFAULT 'pickup',
+  delivery_address TEXT,
+  delivery_landmark TEXT,
+  notes TEXT,
+  prescription_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (customer_id) REFERENCES profiles(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_orders_number ON orders(order_number);
+CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at);
+
+CREATE TABLE IF NOT EXISTS order_items (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL,
+  product_id TEXT,
+  product_name_snapshot TEXT NOT NULL,
+  unit_price REAL NOT NULL,
+  quantity INTEGER NOT NULL,
+  subtotal REAL NOT NULL,
+  image_url TEXT,
+  prescription_required INTEGER NOT NULL DEFAULT 0,
+  dosage_form TEXT,
+  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL,
+  method TEXT NOT NULL DEFAULT 'pochi_la_biashara',
+  business_number TEXT NOT NULL DEFAULT '07417758578',
+  amount REAL NOT NULL,
+  transaction_reference TEXT UNIQUE NOT NULL,
+  proof_file_id TEXT,
+  status TEXT NOT NULL DEFAULT 'submitted',
+  verified_by TEXT,
+  verified_at TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id);
+CREATE INDEX IF NOT EXISTS idx_payments_reference ON payments(transaction_reference);
+
+CREATE TABLE IF NOT EXISTS prescriptions (
+  id TEXT PRIMARY KEY,
+  prescription_number TEXT UNIQUE NOT NULL,
+  customer_id TEXT,
+  customer_name TEXT NOT NULL,
+  customer_phone TEXT NOT NULL,
+  customer_email TEXT,
+  file_url TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  file_type TEXT NOT NULL,
+  file_size INTEGER DEFAULT 0,
+  notes TEXT,
+  medications_requested TEXT,
+  doctor_name TEXT,
+  hospital_name TEXT,
+  status TEXT NOT NULL DEFAULT 'pending_review',
+  review_notes TEXT,
+  reviewed_by TEXT,
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (customer_id) REFERENCES profiles(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prescriptions_number ON prescriptions(prescription_number);
+CREATE INDEX IF NOT EXISTS idx_prescriptions_customer ON prescriptions(customer_id);
+CREATE INDEX IF NOT EXISTS idx_prescriptions_status ON prescriptions(status);
+
+CREATE TABLE IF NOT EXISTS appointments (
+  id TEXT PRIMARY KEY,
+  appointment_number TEXT UNIQUE NOT NULL,
+  customer_id TEXT,
+  customer_name TEXT NOT NULL,
+  customer_phone TEXT NOT NULL,
+  customer_email TEXT,
+  service_id TEXT,
+  service_name TEXT NOT NULL,
+  appointment_date TEXT NOT NULL,
+  appointment_time TEXT NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  staff_notes TEXT,
+  reviewed_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (customer_id) REFERENCES profiles(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_appointments_number ON appointments(appointment_number);
+CREATE INDEX IF NOT EXISTS idx_appointments_customer ON appointments(customer_id);
+
+CREATE TABLE IF NOT EXISTS services (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  slug TEXT UNIQUE NOT NULL,
+  short_description TEXT DEFAULT '',
+  full_description TEXT DEFAULT '',
+  price_estimate TEXT DEFAULT 'Contact for price',
+  duration TEXT DEFAULT '15 mins',
+  icon_name TEXT DEFAULT 'Activity',
+  category TEXT DEFAULT 'General',
+  available INTEGER NOT NULL DEFAULT 1,
+  featured INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS health_articles (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  slug TEXT UNIQUE NOT NULL,
+  excerpt TEXT DEFAULT '',
+  content TEXT DEFAULT '',
+  category TEXT DEFAULT 'Health Education',
+  author TEXT DEFAULT 'Gods Favor Pharmacy Clinical Team',
+  read_time TEXT DEFAULT '4 min read',
+  published_date TEXT NOT NULL,
+  image_url TEXT,
+  tags_json TEXT DEFAULT '[]',
+  published INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_articles_slug ON health_articles(slug);
+
+CREATE TABLE IF NOT EXISTS contact_messages (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT,
+  phone TEXT NOT NULL,
+  subject TEXT DEFAULT 'General Inquiry',
+  message TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'unread',
+  reply_notes TEXT,
+  replied_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  actor_id TEXT,
+  actor_name TEXT NOT NULL,
+  actor_role TEXT NOT NULL,
+  action TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT,
+  details TEXT NOT NULL,
+  metadata_json TEXT DEFAULT '{}',
+  ip_address TEXT,
+  user_agent TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
+
+CREATE TABLE IF NOT EXISTS pharmacy_settings (
+  id TEXT PRIMARY KEY,
+  key TEXT UNIQUE NOT NULL,
+  value_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS secure_files (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT,
+  file_type TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  file_size INTEGER NOT NULL,
+  storage_path TEXT NOT NULL,
+  original_filename TEXT NOT NULL,
+  is_private INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`;
+
+function getDatabasePath(): string {
+  // If running in Vercel or read-only lambda environment, use /tmp
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return '/tmp/gods_favor_pharmacy.sqlite';
+  }
+
+  const localDataDir = path.join(process.cwd(), 'data');
+  try {
+    if (!fs.existsSync(localDataDir)) {
+      fs.mkdirSync(localDataDir, { recursive: true });
+    }
+    // Test write permission
+    const testFile = path.join(localDataDir, '.write_test');
+    fs.writeFileSync(testFile, 'ok');
+    fs.unlinkSync(testFile);
+    return path.join(localDataDir, 'gods_favor_pharmacy.sqlite');
+  } catch {
+    // Read-only filesystem fallback
+    return '/tmp/gods_favor_pharmacy.sqlite';
+  }
+}
+
 const SCHEMA_FILE = path.join(process.cwd(), 'server', 'db', 'schema.sql');
-const LEGACY_JSON_FILE = path.join(DATA_DIR, 'pharmacy_database.json');
+const LEGACY_JSON_FILE = path.join(process.cwd(), 'data', 'pharmacy_database.json');
 
 let db: DatabaseSync | null = null;
 
@@ -23,27 +351,54 @@ export function getDatabase(): DatabaseSync {
     return db;
   }
 
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  const dbPath = getDatabasePath();
+
+  try {
+    db = openDatabaseInstance(dbPath);
+  } catch (err) {
+    console.warn(`Database open failed on ${dbPath}. Attempting clean rebuild:`, err);
+    try {
+      if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+      if (fs.existsSync(`${dbPath}-wal`)) fs.unlinkSync(`${dbPath}-wal`);
+      if (fs.existsSync(`${dbPath}-shm`)) fs.unlinkSync(`${dbPath}-shm`);
+    } catch {
+      // ignore
+    }
+    db = openDatabaseInstance(dbPath);
   }
-
-  db = new DatabaseSync(DB_FILE);
-  db.exec('PRAGMA foreign_keys = ON;');
-  db.exec('PRAGMA journal_mode = WAL;');
-  db.exec('PRAGMA synchronous = NORMAL;');
-
-  initSchema(db);
-  seedRolesAndPermissions(db);
-  migrateLegacyJsonIfNeeded(db);
 
   return db;
 }
 
-function initSchema(database: DatabaseSync) {
-  if (fs.existsSync(SCHEMA_FILE)) {
-    const schemaSql = fs.readFileSync(SCHEMA_FILE, 'utf-8');
-    database.exec(schemaSql);
+function openDatabaseInstance(dbPath: string): DatabaseSync {
+  const instance = new DatabaseSync(dbPath);
+  instance.exec('PRAGMA foreign_keys = ON;');
+  try {
+    instance.exec('PRAGMA journal_mode = WAL;');
+    instance.exec('PRAGMA synchronous = NORMAL;');
+  } catch {
+    // Fallback if WAL is not permitted on the filesystem
+    instance.exec('PRAGMA journal_mode = DELETE;');
   }
+
+  initSchema(instance);
+  seedRolesAndPermissions(instance);
+  migrateLegacyJsonIfNeeded(instance);
+
+  return instance;
+}
+
+function initSchema(database: DatabaseSync) {
+  try {
+    if (fs.existsSync(SCHEMA_FILE)) {
+      const schemaSql = fs.readFileSync(SCHEMA_FILE, 'utf-8');
+      database.exec(schemaSql);
+      return;
+    }
+  } catch {
+    // Fallback to embedded schema
+  }
+  database.exec(SCHEMA_SQL_FALLBACK);
 }
 
 function seedRolesAndPermissions(database: DatabaseSync) {
