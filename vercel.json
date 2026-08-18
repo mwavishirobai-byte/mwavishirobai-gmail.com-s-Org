@@ -1,9 +1,17 @@
 {
   "version": 2,
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": "dist/server.cjs,server/**"
+    },
+    "api/[...path].ts": {
+      "includeFiles": "dist/server.cjs,server/**"
+    }
+  },
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
     }
   ]
 }

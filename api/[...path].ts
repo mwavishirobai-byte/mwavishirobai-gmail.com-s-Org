@@ -1,5 +1,3 @@
-import app from '../server';
+import handler from './index';
 
-export default function handler(req: any, res: any) {
-  return app(req, res);
-}
+export default handler;
