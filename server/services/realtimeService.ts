@@ -23,7 +23,7 @@ setInterval(() => {
 export const realtimeService = {
   addClient(client: SSEClient) {
     clients.add(client);
-    client.res.write(`data: ${JSON.stringify({ type: 'connected', clientId: client.id, timestamp: new Date().toISOString() })}\n\n`);
+    client.res.write(`data: ${JSON.stringify({ type: 'connected', event: 'connected', clientId: client.id, timestamp: new Date().toISOString() })}\n\n`);
 
     client.res.on('close', () => {
       clients.delete(client);

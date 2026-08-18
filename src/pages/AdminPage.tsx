@@ -97,10 +97,13 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
 
     const handleSseMessage = (event: MessageEvent) => {
       try {
+        if (!event.data) return;
         const parsed = JSON.parse(event.data);
-        if (parsed.event === 'connected') return;
+        const eventName = parsed.event || parsed.type;
+        if (!eventName || eventName === 'connected' || eventName === 'heartbeat') return;
 
-        setLiveAlert(`Live update received: ${parsed.event.replace(/:/g, ' ')}`);
+        const formattedName = typeof eventName === 'string' ? eventName.replace(/:/g, ' ') : 'new update';
+        setLiveAlert(`Live update received: ${formattedName}`);
         setTimeout(() => setLiveAlert(null), 5000);
 
         // Auto-refresh relevant data
